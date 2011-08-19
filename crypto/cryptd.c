@@ -743,7 +743,7 @@ static void __exit cryptd_exit(void)
 	crypto_unregister_template(&cryptd_tmpl);
 }
 
-module_init(cryptd_init);
+subsys_initcall(cryptd_init);
 module_exit(cryptd_exit);
 
 MODULE_LICENSE("GPL");
