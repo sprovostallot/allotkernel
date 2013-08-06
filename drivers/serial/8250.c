@@ -654,6 +654,9 @@ static void serial8250_clear_fifos(struct uart_8250_port *p)
  */
 static void serial8250_set_sleep(struct uart_8250_port *p, int sleep)
 {
+	if (p->port.flags & UPF_NO_PM)
+		return;
+
 	if (p->capabilities & UART_CAP_SLEEP) {
 		if (p->capabilities & UART_CAP_EFR) {
 			serial_outp(p, UART_LCR, 0xBF);
