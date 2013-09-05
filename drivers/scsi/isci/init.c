@@ -244,7 +244,7 @@ static void isci_unregister_sas_ha(struct isci_host *isci_host)
 
 static int __devinit isci_pci_init(struct pci_dev *pdev)
 {
-	int err, bar_num, bar_mask;
+	int err, bar_num, bar_mask = 0;
 	void __iomem * const *iomap;
 
 	err = pcim_enable_device(pdev);
@@ -624,8 +624,10 @@ static int __devinit isci_pci_probe(struct pci_dev *pdev, const struct pci_devic
 	}
 
 	err = isci_pci_init(pdev);
-	if (err)
+	if (err) {
+		printk(KERN_INFO "%s(): isci_pci_init ret %d\n", __func__, err);
 		return err;
+	};
 
 	for (i = 0; i < num_controllers(pdev); i++) {
 		struct isci_host *h = isci_host_alloc(pdev, i);
@@ -640,8 +642,10 @@ static int __devinit isci_pci_probe(struct pci_dev *pdev, const struct pci_devic
 	}
 
 	err = isci_setup_interrupts(pdev);
-	if (err)
+	if (err) {
+		printk(KERN_INFO "%s(): isci_setup_interrupts ret %d\n", __func__, err);
 		goto err_host_alloc;
+	};
 
 	for_each_isci_host(isci_host, pdev)
 		scsi_scan_host(isci_host->shost);
