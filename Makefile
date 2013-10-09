@@ -337,7 +337,7 @@ CFLAGS_GCOV	= -fprofile-arcs -ftest-coverage
 LINUXINCLUDE    := -Iinclude \
                    $(if $(KBUILD_SRC),-Iinclude2 -I$(srctree)/include) \
                    -I$(srctree)/arch/$(hdr-arch)/include               \
-                   -include include/generated/autoconf.h
+                   -include include/linux/autoconf.h
 
 KBUILD_CPPFLAGS := -D__KERNEL__
 
@@ -494,15 +494,15 @@ $(KCONFIG_CONFIG) include/config/auto.conf.cmd: ;
 include/config/%.conf: $(KCONFIG_CONFIG) include/config/auto.conf.cmd
 	$(Q)$(MAKE) -f $(srctree)/Makefile silentoldconfig
 else
-# external modules needs include/generated/autoconf.h and include/config/auto.conf
+# external modules needs include/linux/autoconf.h and include/config/auto.conf
 # but do not care if they are up-to-date. Use auto.conf to trigger the test
 PHONY += include/config/auto.conf
 
 include/config/auto.conf:
-	$(Q)test -e include/generated/autoconf.h -a -e $@ || (		\
+	$(Q)test -e include/linux/autoconf.h -a -e $@ || (		\
 	echo;								\
 	echo "  ERROR: Kernel configuration is invalid.";		\
-	echo "         include/generated/autoconf.h or $@ are missing.";\
+	echo "         include/linux/autoconf.h or $@ are missing.";	\
 	echo "         Run 'make oldconfig && make prepare' on kernel src to fix it.";	\
 	echo;								\
 	/bin/false)
@@ -1203,7 +1203,7 @@ CLEAN_FILES +=	vmlinux System.map \
 # Directories & files removed with 'make mrproper'
 MRPROPER_DIRS  += include/config include2 usr/include include/generated
 MRPROPER_FILES += .config .config.old include/asm .version .old_version \
-                  include/linux/version.h      \
+                  include/linux/autoconf.h include/linux/version.h      \
                   include/linux/utsrelease.h                            \
                   include/linux/bounds.h include/asm*/asm-offsets.h     \
 		  Module.symvers Module.markers tags TAGS cscope*
