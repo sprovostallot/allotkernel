@@ -37,6 +37,7 @@ struct mlx4_device_context {
 	struct list_head	list;
 	struct mlx4_interface  *intf;
 	void		       *context;
+	u16                     port_mtu[MLX4_MAX_PORTS + 1];
 };
 
 static LIST_HEAD(intf_list);
@@ -46,20 +47,28 @@ static DEFINE_MUTEX(intf_mutex);
 static void mlx4_add_device(struct mlx4_interface *intf, struct mlx4_priv *priv)
 {
 	struct mlx4_device_context *dev_ctx;
+	void *context;
 
-	dev_ctx = kmalloc(sizeof *dev_ctx, GFP_KERNEL);
+	dev_ctx = kzalloc(sizeof *dev_ctx, GFP_KERNEL);
 	if (!dev_ctx)
 		return;
 
 	dev_ctx->intf    = intf;
-	dev_ctx->context = intf->add(&priv->dev);
+	spin_lock_irq(&priv->ctx_lock);
+	list_add_tail(&dev_ctx->list, &priv->ctx_list);
+	spin_unlock_irq(&priv->ctx_lock);
 
-	if (dev_ctx->context) {
+	context = intf->add(&priv->dev);
+	if (!context) {
 		spin_lock_irq(&priv->ctx_lock);
-		list_add_tail(&dev_ctx->list, &priv->ctx_list);
+		list_del(&dev_ctx->list);
 		spin_unlock_irq(&priv->ctx_lock);
-	} else
 		kfree(dev_ctx);
+	} else {
+		spin_lock_irq(&priv->ctx_lock);
+		dev_ctx->context = context;
+		spin_unlock_irq(&priv->ctx_lock);
+	}
 }
 
 static void mlx4_remove_device(struct mlx4_interface *intf, struct mlx4_priv *priv)
@@ -77,6 +86,46 @@ static void mlx4_remove_device(struct mlx4_interface *intf, struct mlx4_priv *pr
 			return;
 		}
 }
+
+u16 mlx4_set_interface_mtu_get_max(struct mlx4_interface *intf,
+		struct mlx4_dev *dev, int port, u16 new_mtu)
+{
+	struct mlx4_priv *priv = mlx4_priv(dev);
+	struct mlx4_device_context *dev_ctx;
+	unsigned long flags;
+	int max_mtu = 0;
+
+	spin_lock_irqsave(&priv->ctx_lock, flags);
+	list_for_each_entry(dev_ctx, &priv->ctx_list, list) {
+		if (dev_ctx->intf == intf)
+			dev_ctx->port_mtu[port] = new_mtu;
+		if (dev_ctx->port_mtu[port] > max_mtu)
+			max_mtu = dev_ctx->port_mtu[port];
+	}
+	spin_unlock_irqrestore(&priv->ctx_lock, flags);
+
+	return max_mtu;
+}
+
+void *mlx4_get_prot_dev(struct mlx4_dev *dev, enum mlx4_prot proto, int port)
+{
+	struct mlx4_priv *priv = mlx4_priv(dev);
+	struct mlx4_device_context *dev_ctx;
+	unsigned long flags;
+	void *result = NULL;
+
+	spin_lock_irqsave(&priv->ctx_lock, flags);
+	list_for_each_entry(dev_ctx, &priv->ctx_list, list)
+		if ((dev_ctx->context) &&
+			(dev_ctx->intf->protocol == proto && dev_ctx->intf->get_prot_dev)) {
+			result = dev_ctx->intf->get_prot_dev(dev, dev_ctx->context, port);
+			break;
+	}
+	spin_unlock_irqrestore(&priv->ctx_lock, flags);
+
+	return result;
+}
+EXPORT_SYMBOL_GPL(mlx4_get_prot_dev);
 
 int mlx4_register_interface(struct mlx4_interface *intf)
 {
@@ -112,6 +161,36 @@ void mlx4_unregister_interface(struct mlx4_interface *intf)
 }
 EXPORT_SYMBOL_GPL(mlx4_unregister_interface);
 
+struct mlx4_dev *mlx4_query_interface(void *int_dev, int *port)
+{
+	struct mlx4_priv *priv;
+	struct mlx4_device_context *dev_ctx;
+	enum mlx4_query_reply r;
+	unsigned long flags;
+
+	mutex_lock(&intf_mutex);
+
+	list_for_each_entry(priv, &dev_list, dev_list) {
+		spin_lock_irqsave(&priv->ctx_lock, flags);
+		list_for_each_entry(dev_ctx, &priv->ctx_list, list) {
+			if (!dev_ctx->intf->query || !dev_ctx->context)
+				continue;
+			r = dev_ctx->intf->query(dev_ctx->context, int_dev);
+			if (r != MLX4_QUERY_NOT_MINE) {
+				*port = r;
+				spin_unlock_irqrestore(&priv->ctx_lock, flags);
+				mutex_unlock(&intf_mutex);
+				return &priv->dev;
+			}
+		}
+		spin_unlock_irqrestore(&priv->ctx_lock, flags);
+	}
+
+	mutex_unlock(&intf_mutex);
+	return NULL;
+}
+EXPORT_SYMBOL_GPL(mlx4_query_interface);
+
 void mlx4_dispatch_event(struct mlx4_dev *dev, enum mlx4_dev_event type, int port)
 {
 	struct mlx4_priv *priv = mlx4_priv(dev);
@@ -121,7 +200,7 @@ void mlx4_dispatch_event(struct mlx4_dev *dev, enum mlx4_dev_event type, int por
 	spin_lock_irqsave(&priv->ctx_lock, flags);
 
 	list_for_each_entry(dev_ctx, &priv->ctx_list, list)
-		if (dev_ctx->intf->event)
+		if ( (dev_ctx->intf->event) && (dev_ctx->context) )
 			dev_ctx->intf->event(dev, dev_ctx->context, type, port);
 
 	spin_unlock_irqrestore(&priv->ctx_lock, flags);
@@ -139,7 +218,8 @@ int mlx4_register_device(struct mlx4_dev *dev)
 		mlx4_add_device(intf, priv);
 
 	mutex_unlock(&intf_mutex);
-	mlx4_start_catas_poll(dev);
+	if (!mlx4_is_slave(dev))
+		mlx4_start_catas_poll(dev);
 
 	return 0;
 }
@@ -149,7 +229,8 @@ void mlx4_unregister_device(struct mlx4_dev *dev)
 	struct mlx4_priv *priv = mlx4_priv(dev);
 	struct mlx4_interface *intf;
 
-	mlx4_stop_catas_poll(dev);
+	if (!mlx4_is_slave(dev))
+		mlx4_stop_catas_poll(dev);
 	mutex_lock(&intf_mutex);
 
 	list_for_each_entry(intf, &intf_list, list)
@@ -159,3 +240,4 @@ void mlx4_unregister_device(struct mlx4_dev *dev)
 
 	mutex_unlock(&intf_mutex);
 }
+

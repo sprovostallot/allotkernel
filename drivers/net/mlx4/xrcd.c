@@ -1,5 +1,6 @@
 /*
- * Copyright (c) 2006 Cisco Systems, Inc.  All rights reserved.
+ * Copyright (c) 2006, 2007 Cisco Systems, Inc.  All rights reserved.
+ * Copyright (c) 2007 Mellanox Technologies. All rights reserved.
  *
  * This software is available to you under a choice of one of two
  * licenses.  You may choose to be licensed under the terms of the GNU
@@ -30,48 +31,40 @@
  * SOFTWARE.
  */
 
-#ifndef MLX4_DRIVER_H
-#define MLX4_DRIVER_H
+#include <linux/init.h>
+#include <linux/errno.h>
 
-#include <linux/device.h>
+#include "mlx4.h"
 
-struct mlx4_dev;
+int mlx4_xrcd_alloc(struct mlx4_dev *dev, u32 *xrcdn)
+{
+	struct mlx4_priv *priv = mlx4_priv(dev);
 
-enum mlx4_dev_event {
-	MLX4_DEV_EVENT_CATASTROPHIC_ERROR,
-	MLX4_DEV_EVENT_PORT_UP,
-	MLX4_DEV_EVENT_PORT_DOWN,
-	MLX4_DEV_EVENT_PORT_REINIT,
-};
+	*xrcdn = mlx4_bitmap_alloc(&priv->xrcd_bitmap);
+	if (*xrcdn == -1)
+		return -ENOMEM;
 
-enum mlx4_query_reply {
-	MLX4_QUERY_NOT_MINE	= -1,
-	MLX4_QUERY_MINE_NOPORT 	= 0
-};
+	return 0;
+}
+EXPORT_SYMBOL_GPL(mlx4_xrcd_alloc);
 
-enum mlx4_prot {
-	MLX4_PROT_IB,
-	MLX4_PROT_EN,
-};
+void mlx4_xrcd_free(struct mlx4_dev *dev, u32 xrcdn)
+{
+	mlx4_bitmap_free(&mlx4_priv(dev)->xrcd_bitmap, xrcdn);
+}
+EXPORT_SYMBOL_GPL(mlx4_xrcd_free);
 
-struct mlx4_interface {
-	void *			(*add)	 (struct mlx4_dev *dev);
-	void			(*remove)(struct mlx4_dev *dev, void *context);
-	void			(*event) (struct mlx4_dev *dev, void *context,
-					  enum mlx4_dev_event event, int port);
-	enum mlx4_query_reply	(*query) (void *context, void *);
-	void *			(*get_prot_dev) (struct mlx4_dev *dev,
-						 void *context, u8 port);
-	struct list_head	list;
-	enum mlx4_prot          protocol;
-};
+int mlx4_init_xrcd_table(struct mlx4_dev *dev)
+{
+	struct mlx4_priv *priv = mlx4_priv(dev);
 
-int mlx4_register_interface(struct mlx4_interface *intf);
-void mlx4_unregister_interface(struct mlx4_interface *intf);
-void *mlx4_get_prot_dev(struct mlx4_dev *dev, enum mlx4_prot proto, int port);
+	return mlx4_bitmap_init(&priv->xrcd_bitmap, (1 << 16),
+				(1 << 16) - 1, dev->caps.reserved_xrcds + 1, 0);
+}
 
-struct mlx4_dev *mlx4_query_interface(void *, int *port);
-void mlx4_set_iboe_counter(struct mlx4_dev *dev, int index, u8 port);
-int mlx4_get_iboe_counter(struct mlx4_dev *dev, u8 port);
+void mlx4_cleanup_xrcd_table(struct mlx4_dev *dev)
+{
+	mlx4_bitmap_cleanup(&mlx4_priv(dev)->xrcd_bitmap);
+}
 
-#endif /* MLX4_DRIVER_H */
+

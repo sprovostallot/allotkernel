@@ -51,24 +51,18 @@ int mlx4_en_create_cq(struct mlx4_en_priv *priv,
 	int err;
 
 	cq->size = entries;
-	if (mode == RX) {
-		cq->buf_size = cq->size * sizeof(struct mlx4_cqe);
-		cq->vector   = ring % mdev->dev->caps.num_comp_vectors;
-	} else {
-		cq->buf_size = sizeof(struct mlx4_cqe);
-		cq->vector   = 0;
-	}
+	cq->buf_size = cq->size * mdev->dev->caps.cqe_size;
 
 	cq->ring = ring;
 	cq->is_tx = mode;
 	spin_lock_init(&cq->lock);
 
 	err = mlx4_alloc_hwq_res(mdev->dev, &cq->wqres,
-				cq->buf_size, 2 * PAGE_SIZE);
+				cq->buf_size, 2 * PAGE_SIZE, cq->numa_node);
 	if (err)
 		return err;
 
-	err = mlx4_en_map_buffer(&cq->wqres.buf);
+	err = mlx4_en_map_buffer(&cq->wqres.buf, cq->numa_node);
 	if (err)
 		mlx4_free_hwq_res(mdev->dev, &cq->wqres, cq->buf_size);
 	else
@@ -77,10 +71,11 @@ int mlx4_en_create_cq(struct mlx4_en_priv *priv,
 	return err;
 }
 
-int mlx4_en_activate_cq(struct mlx4_en_priv *priv, struct mlx4_en_cq *cq)
+int mlx4_en_activate_cq(struct mlx4_en_priv *priv, struct mlx4_en_cq *cq, int cq_idx)
 {
 	struct mlx4_en_dev *mdev = priv->mdev;
-	int err;
+	int err = 0;
+	char name[25];
 
 	cq->dev = mdev->pndev[priv->port];
 	cq->mcq.set_ci_db  = cq->wqres.db.db;
@@ -89,11 +84,63 @@ int mlx4_en_activate_cq(struct mlx4_en_priv *priv, struct mlx4_en_cq *cq)
 	*cq->mcq.arm_db    = 0;
 	memset(cq->buf, 0, cq->buf_size);
 
-	if (!cq->is_tx)
-		cq->size = priv->rx_ring[cq->ring].actual_size;
+	if (cq->is_tx == RX) {
+		if (mdev->dev->caps.poolsz) {
+			if (!cq->vector) {
+				snprintf(name , 25, "%s-%d", priv->dev->name, cq->ring);
+				/* Set IRQ for specific name (per ring) */
+				if (mlx4_assign_eq(mdev->dev, name, &cq->vector)) {
+					cq->vector = (cq->ring + 1 + priv->port) %
+						mdev->dev->caps.num_comp_vectors;
+					mlx4_warn(mdev, "Failed Assigning an EQ to "
+						  "%s ,Falling back to legacy"
+						  " EQ's \n", name);
+				 }
+			}
+		} else
+			cq->vector = (cq->ring + 1 + priv->port) %
+					mdev->dev->caps.num_comp_vectors;
+	} else {
+		/* For TX we use the next core on same socket
+		as the RX core    */
+		struct mlx4_en_cq *rx_cq;
+#ifndef CONFIG_PPC
+		int cpu, next_cpu = -1;
+		int curr = cq_idx % num_online_cpus();
+		struct cpumask *mask = cpu_core_mask(curr);
+		for_each_cpu_mask(cpu, *mask) {
+			if (cpu == curr)
+				continue;
+			if (next_cpu == -1) {
+				next_cpu = cpu;
+				continue;
+			}
+			if (next_cpu > curr) {
+				if (cpu < next_cpu && cpu > curr)
+					next_cpu = cpu;
+			} else {
+				if (cpu > curr)
+					next_cpu = cpu;
+			}
+		}
+		if (next_cpu == -1)
+			next_cpu = curr;
 
-	err = mlx4_cq_alloc(mdev->dev, cq->size, &cq->wqres.mtt, &mdev->priv_uar,
-			    cq->wqres.db.dma, &cq->mcq, cq->vector, cq->is_tx);
+		cq_idx = ((num_online_cpus() * (cq_idx / num_online_cpus())) + next_cpu) % priv->rx_ring_num;
+#else
+		cq_idx = cq_idx % priv->rx_ring_num;
+#endif
+		rx_cq = priv->rx_cq[cq_idx];
+		cq->vector = rx_cq->vector;
+	}
+
+	if (!cq->is_tx)
+		cq->size = priv->rx_ring[cq->ring]->actual_size;
+
+	err = mlx4_cq_alloc(mdev->dev, cq->size, &cq->wqres.mtt,
+			&mdev->priv_uar, cq->wqres.db.dma,
+			&cq->mcq, cq->vector, 0);
+
 	if (err)
 		return err;
 
@@ -101,11 +148,11 @@ int mlx4_en_activate_cq(struct mlx4_en_priv *priv, struct mlx4_en_cq *cq)
 	cq->mcq.event = mlx4_en_cq_event;
 
 	if (cq->is_tx) {
-		init_timer(&cq->timer);
-		cq->timer.function = mlx4_en_poll_tx_cq;
-		cq->timer.data = (unsigned long) cq;
+		netif_napi_add(cq->dev, &cq->napi, mlx4_en_poll_tx_cq, MLX4_EN_TX_BUDGET);
+		napi_enable(&cq->napi);
+		mlx4_en_arm_cq(priv, cq);
 	} else {
-		netif_napi_add(cq->dev, &cq->napi, mlx4_en_poll_rx_cq, 64);
+		netif_napi_add(cq->dev, &cq->napi, mlx4_en_poll_rx_cq, MLX4_EN_RX_BUDGET);
 		napi_enable(&cq->napi);
 	}
 
@@ -118,6 +165,9 @@ void mlx4_en_destroy_cq(struct mlx4_en_priv *priv, struct mlx4_en_cq *cq)
 
 	mlx4_en_unmap_buffer(&cq->wqres.buf);
 	mlx4_free_hwq_res(mdev->dev, &cq->wqres, cq->buf_size);
+
+	if (priv->mdev->dev->caps.poolsz && cq->vector)
+		mlx4_release_eq(priv->mdev->dev , cq->vector);
 	cq->buf_size = 0;
 	cq->buf = NULL;
 }
@@ -126,12 +176,8 @@ void mlx4_en_deactivate_cq(struct mlx4_en_priv *priv, struct mlx4_en_cq *cq)
 {
 	struct mlx4_en_dev *mdev = priv->mdev;
 
-	if (cq->is_tx)
-		del_timer(&cq->timer);
-	else {
-		napi_disable(&cq->napi);
-		netif_napi_del(&cq->napi);
-	}
+	napi_disable(&cq->napi);
+	netif_napi_del(&cq->napi);
 
 	mlx4_cq_free(mdev->dev, &cq->mcq);
 }

@@ -32,6 +32,8 @@
  * SOFTWARE.
  */
 
+#include <linux/init.h>
+
 #include "mlx4.h"
 #include "fw.h"
 
@@ -97,21 +99,31 @@ u64 mlx4_make_profile(struct mlx4_dev *dev,
 	profile[MLX4_RES_DMPT].size   = dev_cap->dmpt_entry_sz;
 	profile[MLX4_RES_CMPT].size   = dev_cap->cmpt_entry_sz;
 	profile[MLX4_RES_MTT].size    = dev->caps.mtts_per_seg * dev_cap->mtt_entry_sz;
-	profile[MLX4_RES_MCG].size    = MLX4_MGM_ENTRY_SIZE;
+	profile[MLX4_RES_MCG].size    = mlx4_get_mgm_entry_size(dev);
 
-	profile[MLX4_RES_QP].num      = request->num_qp;
-	profile[MLX4_RES_RDMARC].num  = request->num_qp * request->rdmarc_per_qp;
-	profile[MLX4_RES_ALTC].num    = request->num_qp;
-	profile[MLX4_RES_AUXC].num    = request->num_qp;
-	profile[MLX4_RES_SRQ].num     = request->num_srq;
-	profile[MLX4_RES_CQ].num      = request->num_cq;
-	profile[MLX4_RES_EQ].num      = min_t(unsigned, dev_cap->max_eqs,
-					      dev_cap->reserved_eqs +
-					      num_possible_cpus() + 1);
-	profile[MLX4_RES_DMPT].num    = request->num_mpt;
+	profile[MLX4_RES_QP].num      = 1 << request->num_qp;
+	profile[MLX4_RES_RDMARC].num  = (1 << request->num_qp) * (1 << request->rdmarc_per_qp);
+	profile[MLX4_RES_ALTC].num    = 1 << request->num_qp;
+	profile[MLX4_RES_AUXC].num    = 1 << request->num_qp;
+	profile[MLX4_RES_SRQ].num     = 1 << request->num_srq;
+	profile[MLX4_RES_CQ].num      = 1 << request->num_cq;
+	if (mlx4_is_master(dev)) {
+		profile[MLX4_RES_EQ].num = dev_cap->reserved_eqs +
+					   MLX4_MFUNC_EQ_NUM *
+					   (dev->num_slaves + 1);
+		if (profile[MLX4_RES_EQ].num > dev_cap->max_eqs) {
+			mlx4_warn(dev, "Not enough eqs for:%ld slave functions\n", dev->num_slaves);
+			kfree(profile);
+			return -ENOMEM;
+		}
+	} else
+		profile[MLX4_RES_EQ].num = min_t(unsigned, dev_cap->max_eqs,
+						 dev_cap->reserved_eqs +
+						 (num_possible_cpus() + 1) * dev_cap->num_ports);
+	profile[MLX4_RES_DMPT].num    = 1 << request->num_mpt;
 	profile[MLX4_RES_CMPT].num    = MLX4_NUM_CMPTS;
-	profile[MLX4_RES_MTT].num     = request->num_mtt;
-	profile[MLX4_RES_MCG].num     = request->num_mcg;
+	profile[MLX4_RES_MTT].num     = 1 << request->num_mtt;
+	profile[MLX4_RES_MCG].num     = 1 << request->num_mcg;
 
 	for (i = 0; i < MLX4_RES_NUM; ++i) {
 		profile[i].type     = i;
@@ -171,7 +183,7 @@ u64 mlx4_make_profile(struct mlx4_dev *dev,
 			break;
 		case MLX4_RES_RDMARC:
 			for (priv->qp_table.rdmarc_shift = 0;
-			     request->num_qp << priv->qp_table.rdmarc_shift < profile[i].num;
+			     (1 << request->num_qp) << priv->qp_table.rdmarc_shift < profile[i].num;
 			     ++priv->qp_table.rdmarc_shift)
 				; /* nothing */
 			dev->caps.max_qp_dest_rdma = 1 << priv->qp_table.rdmarc_shift;
@@ -196,7 +208,13 @@ u64 mlx4_make_profile(struct mlx4_dev *dev,
 			init_hca->log_num_cqs = profile[i].log_num;
 			break;
 		case MLX4_RES_EQ:
-			dev->caps.num_eqs     = profile[i].num;
+			if (mlx4_is_master(dev)) {
+				dev->caps.num_eqs = dev_cap->reserved_eqs +
+						    min_t(unsigned,
+							  MLX4_MFUNC_EQ_NUM,
+							  num_possible_cpus() + 1);
+			} else
+				dev->caps.num_eqs     = profile[i].num;
 			init_hca->eqc_base    = profile[i].start;
 			init_hca->log_num_eqs = profile[i].log_num;
 			break;
@@ -218,7 +236,7 @@ u64 mlx4_make_profile(struct mlx4_dev *dev,
 			dev->caps.num_mgms	  = profile[i].num >> 1;
 			dev->caps.num_amgms	  = profile[i].num >> 1;
 			init_hca->mc_base	  = profile[i].start;
-			init_hca->log_mc_entry_sz = ilog2(MLX4_MGM_ENTRY_SIZE);
+			init_hca->log_mc_entry_sz = ilog2(mlx4_get_mgm_entry_size(dev));
 			init_hca->log_mc_table_sz = profile[i].log_num;
 			init_hca->log_mc_hash_sz  = profile[i].log_num - 1;
 			break;

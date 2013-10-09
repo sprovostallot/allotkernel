@@ -62,6 +62,9 @@ u32 mlx4_bitmap_alloc(struct mlx4_bitmap *bitmap)
 	} else
 		obj = -1;
 
+	if (obj != -1)
+		--bitmap->avail;
+
 	spin_unlock(&bitmap->lock);
 
 	return obj;
@@ -72,22 +75,52 @@ void mlx4_bitmap_free(struct mlx4_bitmap *bitmap, u32 obj)
 	mlx4_bitmap_free_range(bitmap, obj, 1);
 }
 
-u32 mlx4_bitmap_alloc_range(struct mlx4_bitmap *bitmap, int cnt, int align)
+static unsigned long find_aligned_range(unsigned long *bitmap,
+					u32 start, u32 nbits,
+					int len, int align, u32 skip_mask)
+{
+	unsigned long end, i;
+
+again:
+	start = ALIGN(start, align);
+
+	while ((start < nbits) && (test_bit(start, bitmap) || (start & skip_mask)))
+		start += align;
+
+	if (start >= nbits)
+		return -1;
+
+	end = start+len;
+	if (end > nbits)
+		return -1;
+
+	for (i = start + 1; i < end; i++) {
+		if (test_bit(i, bitmap) || ((u32)i & skip_mask)) {
+			start = i + 1;
+			goto again;
+		}
+	}
+
+	return start;
+}
+
+u32 mlx4_bitmap_alloc_range(struct mlx4_bitmap *bitmap, int cnt, int align,
+			    u32 skip_mask)
 {
 	u32 obj, i;
 
-	if (likely(cnt == 1 && align == 1))
+	if (likely(cnt == 1 && align == 1 && !skip_mask))
 		return mlx4_bitmap_alloc(bitmap);
 
 	spin_lock(&bitmap->lock);
 
-	obj = bitmap_find_next_zero_area(bitmap->table, bitmap->max,
-				bitmap->last, cnt, align - 1);
+	obj = find_aligned_range(bitmap->table, bitmap->last,
+				 bitmap->max, cnt, align, skip_mask);
 	if (obj >= bitmap->max) {
 		bitmap->top = (bitmap->top + bitmap->max + bitmap->reserved_top)
 				& bitmap->mask;
-		obj = bitmap_find_next_zero_area(bitmap->table, bitmap->max,
-						0, cnt, align - 1);
+		obj = find_aligned_range(bitmap->table, 0, bitmap->max,
+					 cnt, align, skip_mask);
 	}
 
 	if (obj < bitmap->max) {
@@ -102,9 +135,17 @@ u32 mlx4_bitmap_alloc_range(struct mlx4_bitmap *bitmap, int cnt, int align)
 	} else
 		obj = -1;
 
+	if (obj != -1)
+		bitmap->avail -= cnt;
+
 	spin_unlock(&bitmap->lock);
 
 	return obj;
+}
+
+u32 mlx4_bitmap_avail(struct mlx4_bitmap *bitmap)
+{
+	return bitmap->avail;
 }
 
 void mlx4_bitmap_free_range(struct mlx4_bitmap *bitmap, u32 obj, int cnt)
@@ -116,9 +157,7 @@ void mlx4_bitmap_free_range(struct mlx4_bitmap *bitmap, u32 obj, int cnt)
 	spin_lock(&bitmap->lock);
 	for (i = 0; i < cnt; i++)
 		clear_bit(obj + i, bitmap->table);
-	bitmap->last = min(bitmap->last, obj);
-	bitmap->top = (bitmap->top + bitmap->max + bitmap->reserved_top)
-			& bitmap->mask;
+	bitmap->avail += cnt;
 	spin_unlock(&bitmap->lock);
 }
 
@@ -136,6 +175,7 @@ int mlx4_bitmap_init(struct mlx4_bitmap *bitmap, u32 num, u32 mask,
 	bitmap->max  = num - reserved_top;
 	bitmap->mask = mask;
 	bitmap->reserved_top = reserved_top;
+	bitmap->avail = num - reserved_top - reserved_bot;
 	spin_lock_init(&bitmap->lock);
 	bitmap->table = kzalloc(BITS_TO_LONGS(bitmap->max) *
 				sizeof (long), GFP_KERNEL);
@@ -146,6 +186,16 @@ int mlx4_bitmap_init(struct mlx4_bitmap *bitmap, u32 num, u32 mask,
 		set_bit(i, bitmap->table);
 
 	return 0;
+}
+
+/* Like bitmap_init, but doesn't require 'num' to be a power of 2 or
+ * a non-trivial mask */
+int mlx4_bitmap_init_no_mask(struct mlx4_bitmap *bitmap, u32 num,
+			     u32 reserved_bot, u32 reserved_top)
+{
+	u32 num_rounded = roundup_pow_of_two(num);
+	return mlx4_bitmap_init(bitmap, num_rounded, num_rounded - 1,
+				reserved_bot, num_rounded - num + reserved_top);
 }
 
 void mlx4_bitmap_cleanup(struct mlx4_bitmap *bitmap)
@@ -161,7 +211,7 @@ void mlx4_bitmap_cleanup(struct mlx4_bitmap *bitmap)
  */
 
 int mlx4_buf_alloc(struct mlx4_dev *dev, int size, int max_direct,
-		   struct mlx4_buf *buf)
+		   struct mlx4_buf *buf, int numa_node)
 {
 	dma_addr_t t;
 
@@ -185,11 +235,19 @@ int mlx4_buf_alloc(struct mlx4_dev *dev, int size, int max_direct,
 	} else {
 		int i;
 
+		buf->direct.buf  = NULL;
 		buf->nbufs       = (size + PAGE_SIZE - 1) / PAGE_SIZE;
 		buf->npages      = buf->nbufs;
 		buf->page_shift  = PAGE_SHIFT;
-		buf->page_list   = kzalloc(buf->nbufs * sizeof *buf->page_list,
-					   GFP_KERNEL);
+		buf->page_list	 = kzalloc_node(
+					buf->nbufs * sizeof *buf->page_list,
+					GFP_KERNEL,
+					numa_node);
+
+		if (!buf->page_list)
+			buf->page_list = kzalloc(
+					buf->nbufs * sizeof *buf->page_list,
+					GFP_KERNEL);
 		if (!buf->page_list)
 			return -ENOMEM;
 
@@ -207,9 +265,16 @@ int mlx4_buf_alloc(struct mlx4_dev *dev, int size, int max_direct,
 
 		if (BITS_PER_LONG == 64) {
 			struct page **pages;
-			pages = kmalloc(sizeof *pages * buf->nbufs, GFP_KERNEL);
+			pages = kmalloc_node(sizeof *pages * buf->nbufs,
+					 GFP_KERNEL, numa_node);
+
+			if (!pages)
+				pages = kmalloc(sizeof *pages * buf->nbufs,
+						 GFP_KERNEL);
+
 			if (!pages)
 				goto err_free;
+
 			for (i = 0; i < buf->nbufs; ++i)
 				pages[i] = virt_to_page(buf->page_list[i].buf);
 			buf->direct.buf = vmap(pages, buf->nbufs, VM_MAP, PAGE_KERNEL);
@@ -236,7 +301,7 @@ void mlx4_buf_free(struct mlx4_dev *dev, int size, struct mlx4_buf *buf)
 		dma_free_coherent(&dev->pdev->dev, size, buf->direct.buf,
 				  buf->direct.map);
 	else {
-		if (BITS_PER_LONG == 64)
+		if (BITS_PER_LONG == 64 && buf->direct.buf)
 			vunmap(buf->direct.buf);
 
 		for (i = 0; i < buf->nbufs; ++i)
@@ -249,11 +314,16 @@ void mlx4_buf_free(struct mlx4_dev *dev, int size, struct mlx4_buf *buf)
 }
 EXPORT_SYMBOL_GPL(mlx4_buf_free);
 
-static struct mlx4_db_pgdir *mlx4_alloc_db_pgdir(struct device *dma_device)
+static struct mlx4_db_pgdir *mlx4_alloc_db_pgdir(struct device *dma_device,
+						 int numa_node)
 {
 	struct mlx4_db_pgdir *pgdir;
 
-	pgdir = kzalloc(sizeof *pgdir, GFP_KERNEL);
+	pgdir = kzalloc_node(sizeof *pgdir, GFP_KERNEL, numa_node);
+
+	if (!pgdir)
+		pgdir = kzalloc(sizeof *pgdir, GFP_KERNEL);
+
 	if (!pgdir)
 		return NULL;
 
@@ -301,7 +371,8 @@ found:
 	return 0;
 }
 
-int mlx4_db_alloc(struct mlx4_dev *dev, struct mlx4_db *db, int order)
+int mlx4_db_alloc(struct mlx4_dev *dev, struct mlx4_db *db,
+		  int order, int numa_node)
 {
 	struct mlx4_priv *priv = mlx4_priv(dev);
 	struct mlx4_db_pgdir *pgdir;
@@ -313,7 +384,7 @@ int mlx4_db_alloc(struct mlx4_dev *dev, struct mlx4_db *db, int order)
 		if (!mlx4_alloc_db_from_pgdir(pgdir, db, order))
 			goto out;
 
-	pgdir = mlx4_alloc_db_pgdir(&(dev->pdev->dev));
+	pgdir = mlx4_alloc_db_pgdir(&(dev->pdev->dev), numa_node);
 	if (!pgdir) {
 		ret = -ENOMEM;
 		goto out;
@@ -361,17 +432,17 @@ void mlx4_db_free(struct mlx4_dev *dev, struct mlx4_db *db)
 EXPORT_SYMBOL_GPL(mlx4_db_free);
 
 int mlx4_alloc_hwq_res(struct mlx4_dev *dev, struct mlx4_hwq_resources *wqres,
-		       int size, int max_direct)
+		       int size, int max_direct, int numa_node)
 {
 	int err;
 
-	err = mlx4_db_alloc(dev, &wqres->db, 1);
+	err = mlx4_db_alloc(dev, &wqres->db, 1, numa_node);
 	if (err)
 		return err;
 
 	*wqres->db.db = 0;
 
-	err = mlx4_buf_alloc(dev, size, max_direct, &wqres->buf);
+	err = mlx4_buf_alloc(dev, size, max_direct, &wqres->buf, numa_node);
 	if (err)
 		goto err_db;
 

@@ -64,6 +64,7 @@ struct mlx4_dev_cap {
 	int max_responder_per_qp;
 	int max_rdma_global;
 	int local_ca_ack_delay;
+	int pf_num;
 	int num_ports;
 	u32 max_msg_sz;
 	int ib_mtu[MLX4_MAX_PORTS + 1];
@@ -73,8 +74,16 @@ struct mlx4_dev_cap {
 	int max_pkeys[MLX4_MAX_PORTS + 1];
 	u64 def_mac[MLX4_MAX_PORTS + 1];
 	u16 eth_mtu[MLX4_MAX_PORTS + 1];
+	int trans_type[MLX4_MAX_PORTS + 1];
+	int vendor_oui[MLX4_MAX_PORTS + 1];
+	u16 wavelength[MLX4_MAX_PORTS + 1];
+	u64 trans_code[MLX4_MAX_PORTS + 1];
 	u16 stat_rate_support;
-	u32 flags;
+	int udp_rss;
+	int loopback_support;
+	int vep_uc_steering;
+	int vep_mc_steering;
+	u64 flags;
 	int reserved_uars;
 	int uar_size;
 	int min_page_sz;
@@ -89,6 +98,8 @@ struct mlx4_dev_cap {
 	int max_mcgs;
 	int reserved_pds;
 	int max_pds;
+	int reserved_xrcds;
+	int max_xrcds;
 	int qpc_entry_sz;
 	int rdmarc_entry_sz;
 	int altc_entry_sz;
@@ -99,14 +110,24 @@ struct mlx4_dev_cap {
 	int dmpt_entry_sz;
 	int cmpt_entry_sz;
 	int mtt_entry_sz;
+	int inline_cfg;
 	int resize_srq;
 	u32 bmme_flags;
 	u32 reserved_lkey;
 	u64 max_icm_sz;
 	int max_gso_sz;
 	u8  supported_port_types[MLX4_MAX_PORTS + 1];
+	u8  suggested_port[MLX4_MAX_PORTS + 1];
+	u8  default_sense[MLX4_MAX_PORTS + 1];
 	u8  log_max_macs[MLX4_MAX_PORTS + 1];
 	u8  log_max_vlans[MLX4_MAX_PORTS + 1];
+	u32 max_basic_counters;
+	u32 max_ext_counters;
+	int wol;
+	u16 clp_ver;
+	u32 sync_qp;
+	int fast_drop;
+	int qinq;
 };
 
 struct mlx4_adapter {
@@ -160,6 +181,10 @@ struct mlx4_set_ib_param {
 };
 
 int mlx4_QUERY_DEV_CAP(struct mlx4_dev *dev, struct mlx4_dev_cap *dev_cap);
+int mlx4_QUERY_SLAVE_CAP(struct mlx4_dev *dev, struct mlx4_caps *caps);
+int mlx4_QUERY_SLAVE_CAP_wrapper(struct mlx4_dev *dev, int slave, struct mlx4_vhcr *vhcr,
+						    struct mlx4_cmd_mailbox *inbox,
+						    struct mlx4_cmd_mailbox *outbox);
 int mlx4_MAP_FA(struct mlx4_dev *dev, struct mlx4_icm *icm);
 int mlx4_UNMAP_FA(struct mlx4_dev *dev);
 int mlx4_RUN_FW(struct mlx4_dev *dev);
@@ -173,5 +198,10 @@ int mlx4_MAP_ICM_AUX(struct mlx4_dev *dev, struct mlx4_icm *icm);
 int mlx4_UNMAP_ICM_AUX(struct mlx4_dev *dev);
 int mlx4_NOP(struct mlx4_dev *dev);
 int mlx4_MOD_STAT_CFG(struct mlx4_dev *dev, struct mlx4_mod_stat_cfg *cfg);
+int mlx4_QUERY_FUNC(struct mlx4_dev *dev, int func, u8 *pf_num);
+int mlx4_QUERY_VEP_CFG(struct mlx4_dev *dev, u8 vep_num, u8 port, struct mlx4_vep_cfg *cfg);
+int mlx4_update_uplink_arbiter(struct mlx4_dev *dev, u8 port);
+int mlx4_set_vep_maps(struct mlx4_dev *dev);
+void mlx4_opreq_action(struct work_struct *work);
 
 #endif /* MLX4_FW_H */
