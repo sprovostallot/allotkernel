@@ -1,4 +1,0 @@
-Fine ... restore CONFIG_HZ back to 300 ...
---This line, and those below, will be ignored--
-
-M    allot_defconfig
