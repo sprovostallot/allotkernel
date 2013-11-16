@@ -1,7 +1,7 @@
 Name: kernel
 Summary: The Linux Kernel
 Version: 2.6.32.61
-Release: 1.AllotOS
+Release: 5.AllotOS
 License: GPL
 Group: System Environment/Kernel
 Vendor: Allot Communications, Inc.
