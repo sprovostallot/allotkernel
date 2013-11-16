@@ -1,7 +1,7 @@
 Name: kernel
 Summary: The Linux Kernel
 Version: 2.6.32.61
-Release: 5.AllotOS
+Release: 6.AllotOS
 License: GPL
 Group: System Environment/Kernel
 Vendor: Allot Communications, Inc.
@@ -11,7 +11,7 @@ Source: ../%{name}-%{version}.tar.gz
 BuildRoot: /var/tmp/%{name}-%{version}-root
 
 Provides:  %{name}-%{version}
-Requires: module-init-tools
+Requires: module-init-tools fileutils initscripts
 
 #%define __spec_install_post /usr/lib/rpm/brp-compress || :
 %define debug_package %{nil}
