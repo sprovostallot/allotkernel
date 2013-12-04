@@ -26,7 +26,7 @@ RPM := $(shell if [ -x "/usr/bin/rpmbuild" ]; then echo rpmbuild; \
 	           else echo rpm; fi)
 
 # Remove hyphens since they have special meaning in RPM filenames
-KERNELPATH := kernel-$(subst -,_,$(KERNELRELEASE))
+KERNELPATH := kernel-$(KERNELVERSION)
 # Include only those top-level files that are needed by make, plus the GPL copy
 TAR_CONTENT := $(KBUILD_ALLDIRS) kernel.spec .config .scmversion Makefile \
                Kbuild Kconfig COPYING $(wildcard localversion*)
@@ -44,7 +44,6 @@ rpm-pkg rpm: FORCE
 	fi
 	$(MAKE) clean
 	ln -sf $(srctree) $(KERNELPATH)
-	$(CONFIG_SHELL) $(MKSPEC) >$(objtree)/kernel.spec
 	$(CONFIG_SHELL) $(srctree)/scripts/setlocalversion --save-scmversion
 	tar -cz $(RCS_TAR_IGNORE) -f $(KERNELPATH).tar.gz $(TAR_CONTENT)
 	rm $(KERNELPATH)
@@ -52,7 +51,7 @@ rpm-pkg rpm: FORCE
 	$(CONFIG_SHELL) $(srctree)/scripts/mkversion > $(objtree)/.tmp_version
 	mv -f $(objtree)/.tmp_version $(objtree)/.version
 	$(RPM) $(RPMOPTS) --target $(UTS_MACHINE) -ta $(KERNELPATH).tar.gz
-	rm $(KERNELPATH).tar.gz kernel.spec
+	rm $(KERNELPATH).tar.gz
 
 # binrpm-pkg
 # ---------------------------------------------------------------------------
