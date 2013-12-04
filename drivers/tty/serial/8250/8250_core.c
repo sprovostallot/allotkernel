@@ -558,6 +558,8 @@ static void serial8250_set_sleep(struct uart_8250_port *p, int sleep)
 		serial_out(p, UART_EXAR_SLEEP, 0xff);
 		return;
 	}
+	if (p->port.no_pm)
+		return;
 
 	if (p->capabilities & UART_CAP_SLEEP) {
 		if (p->capabilities & UART_CAP_EFR) {

@@ -1031,6 +1031,25 @@ static int pci_oxsemi_tornado_init(struct pci_dev *dev)
 	pci_iounmap(dev, p);
 	return number_uarts;
 }
+static int
+pci_pericom_setup(struct serial_private *priv, const struct pciserial_board *board,
+	struct uart_port *port, int idx)
+{
+	unsigned int bar, offset = board->first_offset, maxnr;
+
+	port->no_pm++;
+
+	bar = FL_GET_BASE(board->flags);
+
+	if ((board->num_ports == 4) && (idx == 3)) idx = 7;
+
+	offset += idx * board->uart_offset;
+
+	maxnr = (pci_resource_len(priv->dev, bar) - board->first_offset) >>
+		(board->reg_shift + 3);
+
+	return setup_port(priv, port, bar, offset, board->reg_shift);
+}
 
 static int pci_asix_setup(struct serial_private *priv,
 		  const struct pciserial_board *board,
@@ -2256,6 +2275,16 @@ static struct pci_serial_quirk pci_serial_quirks[] __refdata = {
 	},
 
 	/*
+	 * Pericom
+	 */
+	{
+		.vendor		= PCI_VENDOR_ID_PERICOM,
+		.device		= PCI_ANY_ID,
+		.subvendor	= PCI_ANY_ID,
+		.subdevice	= PCI_ANY_ID,
+		.setup		= pci_pericom_setup,
+	},
+	/*
 	 * Default "match everything" terminator entry
 	 */
 	{
@@ -2451,6 +2480,10 @@ enum pci_board_num_t {
 	pbn_omegapci,
 	pbn_NETMOS9900_2s_115200,
 	pbn_brcm_trumanage,
+	pbn_pericom_PI7C9X7951,
+	pbn_pericom_PI7C9X7952,
+	pbn_pericom_PI7C9X7954,
+	pbn_pericom_PI7C9X7958,
 };
 
 /*
@@ -3201,6 +3234,34 @@ static struct pciserial_board pci_boards[] = {
 		.reg_shift	= 2,
 		.base_baud	= 115200,
 	},
+	/*
+	 * Pericom Taiwan Limited PI7C9X795[1248] Uno/Dual/Quad/Octal UART
+	 */
+	[pbn_pericom_PI7C9X7951] = {
+		.flags		= FL_BASE0,
+		.num_ports	= 1,
+		.base_baud	= 921600,
+		.uart_offset	= 0x8,
+	},
+	[pbn_pericom_PI7C9X7952] = {
+		.flags		= FL_BASE0,
+		.num_ports	= 2,
+		.base_baud	= 921600,
+		.uart_offset	= 0x8,
+	},
+	[pbn_pericom_PI7C9X7954] = {
+		.flags		= FL_BASE0,
+		.num_ports	= 4,
+		.base_baud	= 921600,
+		.uart_offset	= 0x8,
+	},
+	[pbn_pericom_PI7C9X7958] = {
+		.flags		= FL_BASE0,
+		.num_ports	= 8,
+		.base_baud	= 921600,
+		.uart_offset	= 0x8,
+	},
+
 };
 
 static const struct pci_device_id blacklist[] = {
@@ -4910,6 +4971,26 @@ static struct pci_device_id serial_pci_tbl[] = {
 		PCI_ANY_ID, PCI_ANY_ID,
 		0,
 		0, pbn_exar_XR17V358 },
+
+	/*
+	 * Pericom Taiwan Limited PI7C9X795[1248] Uno/Dual/Quad/Octal UART
+	 */
+	{	PCI_VENDOR_ID_PERICOM, PCI_DEVICE_ID_PERICOM_PI7C9X7951,
+		PCI_ANY_ID, PCI_ANY_ID,
+		0,
+		0, pbn_pericom_PI7C9X7951 },
+	{	PCI_VENDOR_ID_PERICOM, PCI_DEVICE_ID_PERICOM_PI7C9X7952,
+		PCI_ANY_ID, PCI_ANY_ID,
+		0,
+		0, pbn_pericom_PI7C9X7952 },
+	{	PCI_VENDOR_ID_PERICOM, PCI_DEVICE_ID_PERICOM_PI7C9X7954,
+		PCI_ANY_ID, PCI_ANY_ID,
+		0,
+		0, pbn_pericom_PI7C9X7954 },
+	{	PCI_VENDOR_ID_PERICOM, PCI_DEVICE_ID_PERICOM_PI7C9X7958,
+		PCI_ANY_ID, PCI_ANY_ID,
+		0,
+		0, pbn_pericom_PI7C9X7958 },
 
 	/*
 	 * These entries match devices with class COMMUNICATION_SERIAL,
