@@ -95,7 +95,7 @@ rm -rf %{buildroot}
 %files
 %defattr (-, root, root)
 %dir /lib/modules
-/lib/modules/%{version}-%{release}+
+/lib/modules/%{version}-%{release}
 /lib/firmware
 /boot/*
 
