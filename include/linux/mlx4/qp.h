@@ -34,7 +34,6 @@
 #define MLX4_QP_H
 
 #include <linux/types.h>
-#include <linux/if_ether.h>
 
 #include <linux/mlx4/device.h>
 
@@ -144,7 +143,7 @@ struct mlx4_qp_path {
 	u8			feup;
 	u8			fvl_rx;
 	u8			reserved4[2];
-	u8			dmac[ETH_ALEN];
+	u8			dmac[6];
 };
 
 enum { /* fl */
@@ -319,7 +318,7 @@ struct mlx4_wqe_datagram_seg {
 	__be32			dqpn;
 	__be32			qkey;
 	__be16			vlan;
-	u8			mac[ETH_ALEN];
+	u8			mac[6];
 };
 
 struct mlx4_wqe_lso_seg {
