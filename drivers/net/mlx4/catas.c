@@ -91,6 +91,9 @@ static void catas_reset(struct work_struct *work)
 	LIST_HEAD(tlist);
 	int ret;
 
+	if (!mutex_trylock(&drv_mutex))
+		return;
+
 	spin_lock_irq(&catas_lock);
 	list_splice_init(&catas_list, &tlist);
 	spin_unlock_irq(&catas_lock);
@@ -108,6 +111,7 @@ static void catas_reset(struct work_struct *work)
 			mlx4_dbg(dev, "Reset succeeded\n");
 		}
 	}
+	mutex_unlock(&drv_mutex);
 }
 
 void mlx4_start_catas_poll(struct mlx4_dev *dev)

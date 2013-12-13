@@ -654,6 +654,7 @@ static struct pci_device_id __devinitdata mvs_pci_table[] = {
 	{ PCI_VDEVICE(MARVELL, 0x6440), chip_6440 },
 	{ PCI_VDEVICE(MARVELL, 0x6485), chip_6485 },
 	{ PCI_VDEVICE(MARVELL, 0x9480), chip_9480 },
+	{ PCI_VDEVICE(MARVELL_EXT, 0x9480), chip_9480 },
 	{ PCI_VDEVICE(MARVELL, 0x9180), chip_9180 },
 	{ PCI_VDEVICE(ARECA, PCI_DEVICE_ID_ARECA_1300), chip_1300 },
 	{ PCI_VDEVICE(ARECA, PCI_DEVICE_ID_ARECA_1320), chip_1320 },

@@ -56,8 +56,6 @@ rpm-pkg rpm: $(objtree)/kernel.spec FORCE
 	$(RPM) $(RPMOPTS) --target $(UTS_MACHINE) -ta ../$(KERNELPATH).tar.gz
 	rm ../$(KERNELPATH).tar.gz
 
-clean-files := $(objtree)/kernel.spec
-
 # binrpm-pkg
 # ---------------------------------------------------------------------------
 $(objtree)/binkernel.spec: $(MKSPEC) $(srctree)/Makefile

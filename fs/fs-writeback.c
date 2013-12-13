@@ -720,7 +720,7 @@ void writeback_inodes_wbc(struct writeback_control *wbc)
  * been forced to throttle against that inode.  Also, the code reevaluates
  * the dirty each time it has written this many pages.
  */
-#define MAX_WRITEBACK_PAGES     1024
+#define MAX_WRITEBACK_PAGES     16*1024
 
 static inline bool over_bground_thresh(void)
 {

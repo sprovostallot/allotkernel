@@ -31,6 +31,7 @@
  * SOFTWARE.
  */
 
+#include <linux/init.h>
 #include <linux/errno.h>
 #include <linux/pci.h>
 #include <linux/delay.h>
@@ -38,6 +39,42 @@
 #include <linux/jiffies.h>
 
 #include "mlx4.h"
+
+
+#define MLX4_OWNER_BASE	0x8069c
+#define MLX4_OWNER_SIZE	4
+
+int mlx4_get_ownership(struct mlx4_dev *dev)
+{
+	void __iomem *owner;
+	u32 ret;
+
+	owner = ioremap(pci_resource_start(dev->pdev, 0) + MLX4_OWNER_BASE,
+			MLX4_OWNER_SIZE);
+	if (!owner) {
+		mlx4_err(dev, "Failed to obtain ownership bit\n");
+		return -ENOMEM;
+	}
+
+	ret = readl(owner);
+	iounmap(owner);
+	return (int) !!ret;
+}
+
+void mlx4_free_ownership(struct mlx4_dev *dev)
+{
+	void __iomem *owner;
+
+	owner = ioremap(pci_resource_start(dev->pdev, 0) + MLX4_OWNER_BASE,
+			MLX4_OWNER_SIZE);
+	if (!owner) {
+		mlx4_err(dev, "Failed to obtain ownership bit\n");
+		return;
+	}
+	writel(0, owner);
+	msleep(1000);
+	iounmap(owner);
+}
 
 int mlx4_reset(struct mlx4_dev *dev)
 {
@@ -119,8 +156,8 @@ int mlx4_reset(struct mlx4_dev *dev)
 	writel(MLX4_RESET_VALUE, reset + MLX4_RESET_OFFSET);
 	iounmap(reset);
 
-	/* Docs say to wait one second before accessing device */
-	msleep(1000);
+	/* wait half a second before accessing device */
+	msleep(500);
 
 	end = jiffies + MLX4_RESET_TIMEOUT_JIFFIES;
 	do {
