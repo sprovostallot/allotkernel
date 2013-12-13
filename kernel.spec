@@ -1,6 +1,6 @@
 Name: kernel
 Summary: The Linux Kernel
-Version: 3.11.9
+Version: 3.11.10
 Release: 5.AllotOS
 License: GPL
 Group: System Environment/Kernel
